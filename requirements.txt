@@ -1,0 +1,25 @@
+# Local wheel required for FAISS to work
+./wheels/faiss_gpu-1.7.3-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+
+# Packages written by the author
+nldk
+
+# Packages trusted with inexact version specified
+nltk==3.*
+numpy==1.*
+pandas==1.5.*
+python-dotenv==1.*
+sacrebleu==2.*
+scikit-learn==1.*
+torch==2.*
+ujson==5.*
+
+# Need exact version specified (untrusted)
+accelerate==0.28.0
+colbert-ai==0.2.19
+datasets==2.14.6
+dspy-ai==2.4.5
+evaluate==0.4.1
+regex==2023.10.3
+safetensors==0.4.2
+transformers==4.39.1

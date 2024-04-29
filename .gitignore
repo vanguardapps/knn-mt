@@ -1,0 +1,11 @@
+/wheels
+/data
+/.env
+/model_output
+/notes
+/.venv
+/bin
+/experiments
+__pycache__
+output*.txt
+*.log
