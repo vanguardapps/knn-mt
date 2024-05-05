@@ -118,15 +118,26 @@ HF_TOKENIZER_PARAMS = [
 
 
 class ModelFromCheckpoint(PreTrainedModel):
-    """Adapter model to train"""
+    """Model from Hugging Face checkpoint.
 
-    def __init__(self, checkpoint=None, **kwargs):
+    Attributes:
+        tokenizer (AutoTokenizer): Tokenizer for the model.
+        model_config (AutoConfig): Configuration for the model.
+        model (AutoModelForSeq2SeqLM): Instantiated model.
+        custom_device (torch.device or str): Device for model computations.
+    """
+
+    def __init__(self, checkpoint=None, use_cpu=False, **kwargs):
         """Initialize the adapter model and tokenizer with a Hugging Face checkpoint.
 
         Args:
             checkpoint:
                 Specifies the string checkpoint of the model to load. Either a HF
                 hub checkpoint or the path to the local model checkpoint directory.
+            use_cpu:
+                When true, tells the model to make the device 'cpu' even when a GPU is
+                available. When false, the model well always attempt to use any available
+                GPU(s) available in the runtime.
             **kwargs:
                 Keyword arguments to be passed as necessary to the model, model config,
                 and tokenizer initialization functions.
@@ -150,7 +161,6 @@ class ModelFromCheckpoint(PreTrainedModel):
             raise ValueError("Missing required parameter 'checkpoint'")
         self.model_config = AutoConfig.from_pretrained(
             checkpoint,
-            # output_attentions=True,
             **model_config_kwargs,
         )
         super(ModelFromCheckpoint, self).__init__(self.model_config)
@@ -160,7 +170,9 @@ class ModelFromCheckpoint(PreTrainedModel):
         )
 
         self.custom_device = (
-            torch.device("cuda") if torch.cuda.is_available() else "cpu"
+            torch.device("cuda")
+            if torch.cuda.is_available() and (not use_cpu)
+            else "cpu"
         )
         self.model.to(self.custom_device)
 
@@ -169,33 +181,17 @@ class ModelFromCheckpoint(PreTrainedModel):
         )
 
     def forward(self, input_ids, attention_mask=None, labels=None):
+        """
+        Forward pass through the model.
+
+        Args:
+            input_ids (torch.Tensor): Input tensor.
+            attention_mask (torch.Tensor, optional): Attention mask tensor.
+            labels (torch.Tensor, optional): Labels tensor.
+
+        Raises:
+            NotImplementedError: This method is not implemented in the base class.
+        """
         raise NotImplementedError(
             "ModelFromCheckpoint.forward not implemented in base class."
         )
-
-
-# def main():
-#     load_dotenv()  # Sets HF_TOKEN
-
-#     checkpoint = "facebook/nllb-200-distilled-600M"
-#     src_lang = "eng_Latn"
-#     tgt_lang = "deu_Latn"
-
-#     tokenizer = AutoTokenizer.from_pretrained(
-#         checkpoint,
-#     )
-
-#     model = ModelFromCheckpoint(
-#         checkpoint,
-#         forced_bos_token_id=tokenizer.lang_code_to_id[tgt_lang],
-#         token=True,
-#         src_lang=src_lang,
-#         tgt_lang=tgt_lang,
-#     )
-
-#     output = model("hello, how are you?")
-#     print(dir(output))
-
-
-# if __name__ == "__main__":
-#     main()
