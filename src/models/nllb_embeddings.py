@@ -49,11 +49,9 @@ class NLLBEmbeddingsModel(NLLBCheckpoint):
 
         batch_size = batch.inputs.input_ids.size(0)
 
-        token_hidden_states = torch.empty(
+        target_hidden_states = torch.empty(
             (batch_size, 0, self.model_config.hidden_size), dtype=torch.float32
         ).to(self.custom_device)
-
-        token_hidden_states.requires_grad = False
 
         label_id_count = batch.labels.input_ids.size(1)
 
@@ -71,7 +69,7 @@ class NLLBEmbeddingsModel(NLLBCheckpoint):
                 # Get all of the encoder representations on the first pass
                 if index == 1:
                     encoder_last_hidden_state = (
-                        # .detach() not necessary but illustrates intent (would still work without torch.no_grad())
+                        # .detach not necessary but illustrates intent (would still work without torch.no_grad())
                         model_outputs.encoder_last_hidden_state.detach()
                     )
 
@@ -84,17 +82,9 @@ class NLLBEmbeddingsModel(NLLBCheckpoint):
                 token_representation = last_hidden_state[:, np.newaxis, token_rep_idx]
 
                 # Concatenate decoder last hidden state of current token
-                token_hidden_states = torch.cat(
-                    (token_hidden_states, token_representation), dim=1
+                target_hidden_states = torch.cat(
+                    (target_hidden_states, token_representation), dim=1
                 )
 
-        batch.encoder_last_hidden_state = encoder_last_hidden_state
-        batch.token_hidden_states = token_hidden_states
-        batch.inputs_tokenized = [
-            self.tokenizer.convert_ids_to_tokens(input_ids)
-            for input_ids in batch.inputs.input_ids
-        ]
-        batch.labels_tokenized = [
-            self.tokenizer.convert_ids_to_tokens(input_ids)
-            for input_ids in batch.labels.input_ids
-        ]
+        batch.encoder_last_hidden_state = encoder_last_hidden_state.cpu()
+        batch.target_hidden_states = target_hidden_states.cpu()

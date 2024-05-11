@@ -60,53 +60,6 @@ class NLLBCheckpoint(ModelFromCheckpoint):
             ),
         )
 
-    @staticmethod
-    def _get_quality_mask(input_text):
-        """Return a list of boolean values as a mask for per-sequence input quality.
-
-        There are two criteria for a quality sequence. One is that the source text must contain
-        a reasonable distribution of word characters spread across at least two words. This is
-        achieved through several sequential regular expresion patterns, and is currently
-        configured to test for at least 5 word characters shared between at minimum 2 words.
-        Additionally, it is notable that using this logic, any sentences with only one word will
-        automatically be rejected.
-
-        The second criteria is the source text must contain less than 65% non-word characters.
-
-        Args:
-            input_text: Batch of string input sequences.
-        """
-        quality_mask = []
-
-        non_word_threshold = 0.65
-
-        patterns = [
-            r"(\pL{1,}).+(\pL{4,})",
-            r"(\pL{2,}).+(\pL{3,})",
-            r"(\pL{3,}).+(\pL{2,})",
-            r"(\pL{4,}).+(\pL{1,})",
-        ]
-        non_word = r"[^\pL]"
-
-        for sentence in input_text:
-            regex_results = [
-                1 if bool(re.search(pattern, sentence)) else 0 for pattern in patterns
-            ]
-            if sum(regex_results) == 0:
-                quality_mask.append(False)
-                continue
-
-            chars = list(sentence)
-            punct_mask = [1 if bool(re.search(non_word, char)) else 0 for char in chars]
-
-            if sum(punct_mask) >= non_word_threshold * len(chars):
-                quality_mask.append(False)
-                continue
-
-            quality_mask.append(True)
-
-        return quality_mask
-
     def forward(self, batch):
         batch.collate(tokenizer=self.tokenizer)
         batch_input_ids = batch.inputs.input_ids.to(self.custom_device)

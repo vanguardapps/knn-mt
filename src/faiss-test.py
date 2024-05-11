@@ -1,4 +1,5 @@
 import faiss
+import numpy as np
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 import torch
 
@@ -28,28 +29,78 @@ vectors = torch.squeeze(enc_hidden.clone().detach()).numpy()
 
 print(vectors.shape)
 
-exit(0)
-
 # Get one GPU allocation
 res = faiss.StandardGpuResources()
 
 vector_dimension = 1024
 index = faiss.IndexFlatL2(vector_dimension)
 
-# index_with_map = faiss.IndexIDMap(index)
+index_with_map = faiss.IndexIDMap(index)
 
 # Place index on GPU
-gpu_index = faiss.index_cpu_to_gpu(res, 0, index)
-# gpu_index_with_map = faiss.index_cpu_to_gpu(res, 0, index_with_map)
+# gpu_index = faiss.index_cpu_to_gpu(res, 0, index)
+gpu_index_with_map = faiss.index_cpu_to_gpu(res, 0, index_with_map)
 
 faiss.normalize_L2(vectors)
 
-index.add(vectors)
-# gpu_index_with_map.add(vectors, ids)
+# index.add(vectors)
+# gpu_index_with_map.add(vectors, np.arange(18))
+gpu_index_with_map.add_with_ids(
+    vectors,
+    np.array(
+        [
+            3923,
+            2334,
+            123023,
+            3,
+            343,
+            2339,
+            2220,
+            29332,
+            5854,
+            823,
+            999,
+            223,
+            5719,
+            4093,
+            3273,
+            9382,
+            7333,
+            3937,
+        ],
+        dtype=np.int64,
+    ),
+)
+# index_with_map.add_with_ids(
+#     vectors,
+#     np.array(
+#         [
+#             3923,
+#             2334,
+#             123023,
+#             3,
+#             343,
+#             2339,
+#             2220,
+#             29332,
+#             5854,
+#             823,
+#             999,
+#             223,
+#             5719,
+#             4093,
+#             3273,
+#             9382,
+#             7333,
+#             3937,
+#         ],
+#         dtype=np.int64,
+#     ),
+# )
 
 # Finally search
 k = 3
-D, I = index.search(vectors[:3], k)
+D, I = gpu_index_with_map.search(vectors[:3], k)
 
 print(D)
 print(I)
