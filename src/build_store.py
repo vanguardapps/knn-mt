@@ -1,4 +1,8 @@
+import os
+import psycopg2
+from dotenv import load_dotenv
 from knn.knn_dataset import KNNDataset
+from knn.knn_store import KNNStore
 from models.nllb_embeddings import NLLBEmbeddingsModel
 from models.batch import EmbeddingsBatch
 from torch.utils.data import DataLoader
@@ -6,6 +10,31 @@ from tqdm import tqdm
 
 
 def main():
+    load_dotenv()
+
+    PGHOST = os.environ["PGHOST"]
+    PGUSER = os.environ["PGUSER"]
+    PGPORT = os.environ["PGPORT"]
+    PGDATABASE = os.environ["PGDATABASE"]
+    PGPASSWORD = os.environ["PGPASSWORD"]
+
+    connection = psycopg2.connect(
+        database=PGDATABASE,
+        user=PGUSER,
+        password=PGPASSWORD,
+        host=PGHOST,
+        port=int(PGPORT),
+    )
+
+    cursor = connection.cursor()
+
+    cursor.execute("SELECT * from test_table;")
+
+    # Fetch all rows from database
+    record = cursor.fetchall()
+
+    print("Data from Database: ", record)
+
     checkpoint = "facebook/nllb-200-distilled-600M"
     src_lang = "eng_Latn"
     tgt_lang = "deu_Latn"
@@ -31,7 +60,7 @@ def main():
         model(batch)
         batch.postprocess()
         batch.generate_alignments(tokenizer=model.tokenizer)
-        KNNStore.ingest(batch)
+        store.ingest(batch)
 
 
 if __name__ == "__main__":

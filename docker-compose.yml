@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16.3
+    container_name: knn-mt-postgres
+    restart: unless-stopped
+    ports:
+      - "${PGPORT?Please specify PGPORT in your local environment}:5432"
+    environment:
+      - DB_EXTENSION=uuid-ossp
+      - POSTGRES_PASSWORD=${PGPASSWORD?Please specify PGPASSWORD in your local environment}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
