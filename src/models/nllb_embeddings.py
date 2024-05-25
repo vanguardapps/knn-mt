@@ -50,7 +50,7 @@ class NLLBEmbeddingsModel(NLLBCheckpoint):
         batch_size = batch.inputs.input_ids.size(0)
 
         target_hidden_states = torch.empty(
-            (batch_size, 0, self.model_config.hidden_size), dtype=torch.float32
+            (batch_size, 0, self.config.hidden_size), dtype=torch.float32
         ).to(self.custom_device)
 
         label_id_count = batch.labels.input_ids.size(1)

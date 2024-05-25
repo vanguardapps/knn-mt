@@ -9,6 +9,7 @@ from utils import dict_subset, validate_required_params
 Add parameters herein if using specialized models / tokenizers / model configs
 with parameters not already listed (but allowed by the underlying entity).
 """
+HF_GENERATE_FUNCTION_PARAMS = ["logits_processor"]
 HF_MODEL_FROM_PRETRAINED_PARAMS = [
     "pretrained_model_name_or_path",
     "model_args",
@@ -122,9 +123,10 @@ class ModelFromCheckpoint(PreTrainedModel):
 
     Attributes:
         tokenizer (AutoTokenizer): Tokenizer for the model.
-        model_config (AutoConfig): Configuration for the model.
+        config (AutoConfig): Configuration for the model.
         model (AutoModelForSeq2SeqLM): Instantiated model.
         custom_device (torch.device or str): Device for model computations.
+        generate_kwargs (dict): Keyword arguments to be passed to the model.generate().
     """
 
     def __init__(self, checkpoint=None, use_cpu=False, **kwargs):
@@ -148,6 +150,7 @@ class ModelFromCheckpoint(PreTrainedModel):
         model_kwargs = dict_subset(kwargs, HF_MODEL_FROM_PRETRAINED_PARAMS)
         model_config_kwargs = dict_subset(kwargs, HF_MODEL_CONFIG_PARAMS)
         tokenizer_kwargs = dict_subset(kwargs, HF_TOKENIZER_PARAMS)
+        self.generate_kwargs = dict_subset(kwargs, HF_GENERATE_FUNCTION_PARAMS)
 
         self.tokenizer = AutoTokenizer.from_pretrained(checkpoint, **tokenizer_kwargs)
 
@@ -159,14 +162,14 @@ class ModelFromCheckpoint(PreTrainedModel):
 
         if not checkpoint:
             raise ValueError("Missing required parameter 'checkpoint'")
-        self.model_config = AutoConfig.from_pretrained(
+        self.config = AutoConfig.from_pretrained(
             checkpoint,
             **model_config_kwargs,
         )
-        super(ModelFromCheckpoint, self).__init__(self.model_config)
+        super(ModelFromCheckpoint, self).__init__(self.config)
 
         self.model = AutoModelForSeq2SeqLM.from_pretrained(
-            checkpoint, config=self.model_config, **model_kwargs
+            checkpoint, config=self.config, **model_kwargs
         )
 
         self.custom_device = (

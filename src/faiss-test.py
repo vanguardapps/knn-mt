@@ -104,3 +104,5 @@ D, I = gpu_index_with_map.search(vectors[:3], k)
 
 print(D)
 print(I)
+
+print(faiss.serialize_index(faiss.index_gpu_to_cpu(gpu_index_with_map)))

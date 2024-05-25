@@ -117,13 +117,28 @@ class EmbeddingsBatch(LMBatch):
     an encoder / decoder checkpoint from Hugging Face, inheriting from LMBatch.
 
     Attributes:
-        alignments (dict): Source token index to target token index alignments.
-        inputs (list): List of input sequences.
-        inputs_raw (list): List of raw input sequences.
-        labels (list): List of target sequences.
-        labels_raw (list): List of raw target sequences.
-        encoder_last_hidden_state (list): Last hidden states of the encoder.
-        token_hidden_states (list): Hidden states of each token.
+        alignments (list[dict]):
+            Source token index to target token index alignments.
+        inputs (list):
+            List of input sequences.
+        inputs_raw (list):
+            List of raw input sequences.
+        labels (list):
+            List of target sequences.
+        labels_raw (list):
+            List of raw target sequences.
+        encoder_last_hidden_state (list):
+            Last hidden states of the encoder.
+        token_hidden_states (list):
+            Hidden states of each token.
+        input_ids_masked (list[LongTensor]):
+            Input token IDs with special tokens removed.
+        label_ids_masked (list[LongTensor]):
+            Target token IDs with special tokens removed.
+        encoder_last_hidden_state_masked (list[FloatTensor]):
+            Encoder last hidden states with hidden states for special source tokens removed.
+        target_hidden_states_masked (list[FloatTensor]):
+            Target last hidden states with hidden states for special target tokens removed.
 
     Note: labels are required for this task to be completed, as the last hidden states
     are intended to be retrieved from translation bitext where both source text and

@@ -9,7 +9,7 @@ nltk==3.*
 numpy==1.*
 pandas==1.5.*
 # NOTE: On ubuntu 22.04, psycopg2 had dependency error and required `sudo apt-get install --reinstall libpq-dev`
-psycopg2
+psycopg==3.*
 python-dotenv==1.*
 sacrebleu==2.*
 scikit-learn==1.*
