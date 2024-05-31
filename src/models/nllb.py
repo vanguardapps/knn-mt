@@ -70,6 +70,8 @@ class NLLBCheckpoint(ModelFromCheckpoint):
             **self.generate_kwargs,
         )
 
+        print('got here')
+
         batch_output_text = self.tokenizer.batch_decode(
             output_ids, skip_special_tokens=True
         )
