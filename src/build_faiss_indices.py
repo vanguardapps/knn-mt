@@ -1,4 +1,4 @@
-from knn.store_pg import KNNStorePG
+from knn.knn_store_pg import KNNStorePG
 
 
 def main():

@@ -1,5 +1,5 @@
 from knn.knn_dataset import KNNDataset
-from knn.store_pg import KNNStorePG
+from knn.knn_store_pg import KNNStorePG
 from models.nllb_embeddings import NLLBEmbeddingsModel
 from models.batch import EmbeddingsBatch
 from torch.utils.data import DataLoader

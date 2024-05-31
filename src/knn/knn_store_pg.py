@@ -9,15 +9,10 @@ class KNNStorePG(KNNStore):
     """KNN-MT embeddings store for PostgreSQL.
 
     Note: Uses standard postgres environment variables PGHOST, PGPORT, PGUSER,
-    PGPASSWORD, PGDATABASE to initialize postgres connection.
+    PGPASSWORD, PGDATABASE to compose PostgreSQL connection string.
 
     Attributes:
-        PGHOST (str):
-        PGUSER (str):
-        PGPORT (str):
-        PGDATABASE (str):
-        PGPASSWORD (str):
-        pg_connection (object):
+        connection_string (str):
 
     """
 
@@ -33,6 +28,7 @@ class KNNStorePG(KNNStore):
         embedding_batch_size=None,
         target_batch_size=None,
         embedding_dtype=None,
+        **kwargs,
     ):
         """Initializes KNNStore instance.
 
@@ -45,6 +41,7 @@ class KNNStorePG(KNNStore):
             embedding_batch_size (int):
             target_batch_size (int):
             embedding_dtype (str):
+            **kwargs (dict):
 
         """
         super(KNNStorePG, self).__init__(
@@ -56,9 +53,10 @@ class KNNStorePG(KNNStore):
             embedding_batch_size=embedding_batch_size,
             target_batch_size=target_batch_size,
             embedding_dtype=embedding_dtype,
+            **kwargs,
         )
 
-    def _initialize_database(self, **kwargs):
+    def _initialize_database(self):
         """Initialize database for PostgreSQL"""
         load_dotenv()
 
@@ -168,26 +166,6 @@ class KNNStorePG(KNNStore):
                     table_name=sql.Identifier(self.configuration_table_name)
                 )
             )
-
-            print(
-                f"Creating table '{self.embedding_faiss_table_name}' if it does not exist."
-            )
-            create_embedding_faiss_table_query = sql.SQL(
-                """
-                create table if not exists {embedding_faiss_table_name} (
-                    embedding_id int not null references {embedding_table_name} (id),
-                    source_token_id int not null references {faiss_cache_table_name} (source_token_id)
-                );
-                """
-            ).format(
-                embedding_faiss_table_name=sql.Identifier(
-                    self.embedding_faiss_table_name
-                ),
-                embedding_table_name=sql.Identifier(self.embedding_table_name),
-                faiss_cache_table_name=sql.Identifier(self.faiss_cache_table_name),
-            )
-
-            cursor.execute(create_embedding_faiss_table_query)
 
             cursor.execute(
                 sql.SQL("select name, value from {table_name};").format(

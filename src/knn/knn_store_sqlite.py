@@ -1,23 +1,12 @@
 import os
-import psycopg
-from dotenv import load_dotenv
+import sqlite3
 from knn.knn_store import KNNStore
-from psycopg import sql
 
 
-class KNNStorePG(KNNStore):
-    """KNN-MT embeddings store for PostgreSQL.
+class KNNStoreSQLite(KNNStore):
+    """KNN-MT embeddings store for SQLite.
 
-    Note: Uses standard postgres environment variables PGHOST, PGPORT, PGUSER,
-    PGPASSWORD, PGDATABASE to initialize postgres connection.
-
-    Attributes:
-        PGHOST (str):
-        PGUSER (str):
-        PGPORT (str):
-        PGDATABASE (str):
-        PGPASSWORD (str):
-        pg_connection (object):
+    Note: Uses filepath to SQLite database to initialize / restore the KNN store.
 
     """
 
@@ -25,6 +14,7 @@ class KNNStorePG(KNNStore):
 
     def __init__(
         self,
+        db_filepath,
         embedding_dim=None,
         table_prefix=None,
         configuration_table_stem=None,
@@ -37,6 +27,7 @@ class KNNStorePG(KNNStore):
         """Initializes KNNStore instance.
 
         Args:
+            db_filepath (str):
             embedding_dim (int):
             table_prefix (str):
             configuration_table_stem (str):
@@ -47,7 +38,7 @@ class KNNStorePG(KNNStore):
             embedding_dtype (str):
 
         """
-        super(KNNStorePG, self).__init__(
+        super(KNNStoreSQLite, self).__init__(
             embedding_dim=embedding_dim,
             table_prefix=table_prefix,
             configuration_table_stem=configuration_table_stem,
@@ -58,8 +49,8 @@ class KNNStorePG(KNNStore):
             embedding_dtype=embedding_dtype,
         )
 
-    def _initialize_database(self, **kwargs):
-        """Initialize database for PostgreSQL"""
+    def _initialize_database(self):
+        """Initialize database for SQLite"""
         load_dotenv()
 
         PGHOST = os.environ["PGHOST"]
