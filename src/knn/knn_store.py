@@ -1,10 +1,13 @@
 import faiss
 import numpy as np
+import sys
+import torch
+from abc import ABC, abstractmethod
 from itertools import islice
 from tqdm import tqdm
 
 
-class KNNStore(object):
+class KNNStore(ABC):
     """KNN-MT embeddings store abstract class.
 
     Note: No database implementation takes place in the abstract class.
@@ -130,6 +133,11 @@ class KNNStore(object):
         while batch := tuple(islice(it, n)):
             yield batch
 
+    @staticmethod
+    def _convert_faiss_index_to_bytestring(faiss_index):
+        serialized_index = faiss.serialize_index(faiss_index)
+        return serialized_index.tobytes()
+
     # TODO: Provide KNN batch that does aligning using fast_align. This is going to be kind of a
     # rough spot in the implementation. Makes me want to get back into C++ and learn fast_align
     # from scratch, make a python port of it or something. That would be a real selling point
@@ -166,8 +174,8 @@ class KNNStore(object):
                     source_embedding_bytestring = source_embedding.numpy().tobytes()
                     target_embedding_bytestring = target_embedding.numpy().tobytes()
                     self._store_corpus_timestep(
-                        source_token_id=source_token_id,
-                        target_token_id=target_token_id,
+                        source_token_id=source_token_id.item(),
+                        target_token_id=target_token_id.item(),
                         source_embedding_bytestring=source_embedding_bytestring,
                         target_embedding_bytestring=target_embedding_bytestring,
                     )
@@ -192,6 +200,55 @@ class KNNStore(object):
     def _reset_source_token_embeddings_offset(self):
         self._embedding_table_offset = 0
 
+    def _get_valid_embedding_offset_and_batch_size(self):
+        error_first_sentence = (
+            "Please ensure you are not modifying private class members. "
+        )
+
+        if not isinstance(self._embedding_table_offset, int):
+            raise ValueError(
+                f"{error_first_sentence}" "`_embedding_table_offset` must be an `int`."
+            )
+        if isinstance(self._embedding_table_offset, bool):
+            raise ValueError(
+                f"{error_first_sentence}"
+                "`_embedding_table_offset` must be an `int` and not a `bool`."
+            )
+        if self._embedding_table_offset < 0:
+            raise ValueError(
+                f"{error_first_sentence}"
+                "`_embedding_table_offset` must be positive or zero."
+            )
+
+        if not isinstance(self.embedding_batch_size, int):
+            raise ValueError(
+                f"{error_first_sentence}" "`embedding_batch_size` must be an `int`."
+            )
+        if isinstance(self.embedding_batch_size, bool):
+            raise ValueError(
+                f"{error_first_sentence}"
+                "`embedding_batch_size` must be an `int` and not a `bool`."
+            )
+        if self.embedding_batch_size < 1:
+            raise ValueError(
+                f"{error_first_sentence}" "`embedding_batch_size` must be positive."
+            )
+
+        return self._embedding_table_offset, self.embedding_batch_size
+
+    def _add_bytestrings_to_faiss_index(
+        self, faiss_index, batch_ids, batch_bytestrings
+    ):
+        batch_embeddings_np = np.array(
+            [
+                np.frombuffer(embedding, dtype=self._get_embedding_dtype())
+                for embedding in batch_bytestrings
+            ]
+        )
+        batch_ids_np = np.array(batch_ids, dtype=np.int64)
+        faiss.normalize_L2(batch_embeddings_np)
+        faiss_index.add_with_ids(batch_embeddings_np, batch_ids_np)
+
     def build_source_index(self):
         faiss_index = self._get_new_faiss_index()
         source_token_ids = self._retrieve_all_source_token_ids()
@@ -199,61 +256,28 @@ class KNNStore(object):
         # One source token ID at a time
         for (source_token_id,) in (batches := tqdm(source_token_ids)):
             batches.set_description(
-                "Building index for source token ID {source_token_id}"
+                f"Building index for source token ID {source_token_id}"
             )
 
-            self._reset_source_token_embeddings_offset()
-            embedding_batches = self._retrieve_source_token_embeddings_batch(
+            embedding_batches = self._retrieve_source_token_embeddings_batches(
                 source_token_id
             )
 
-            while len(rows := next(embedding_batches)) > 0:
-                batch_ids, batch_embeddings = zip(*rows)
-                batch_embeddings = [
-                    np.frombuffer(embedding, dtype=self._get_embedding_dtype())
-                    for embedding in batch_embeddings
-                ]
-                batch_embeddings_np = np.array(batch_embeddings)
-                batch_ids_np = np.array(batch_ids, dtype=np.int64)
+            while rows := next(embedding_batches):
+                batch_ids, batch_bytestrings = zip(*rows)
+                self._add_bytestrings_to_faiss_index(
+                    faiss_index, batch_ids, batch_bytestrings
+                )
 
-                faiss.normalize_L2(batch_embeddings_np)
-                faiss_index.add_with_ids(batch_embeddings_np, batch_ids_np)
-
-            serialized_index = faiss.serialize_index(faiss_index)
-            bytestring = serialized_index.tobytes()
+            bytestring = KNNStore._convert_faiss_index_to_bytestring(faiss_index)
             self._store_source_faiss_bytestring(source_token_id, bytestring)
             faiss_index.reset()
 
     def get_source_token_faiss_index(self, source_token_id):
         bytestring = self._retrieve_source_faiss_bytestring(source_token_id)
-        faiss_index = faiss.deserialize_index(np.frombuffer(bytestring, dtype=np.uint8))
-        return faiss_index
-
-    def build_target_faiss_index(self, embedding_ids):
-        faiss_index = self._get_new_faiss_index()
-
-        for batch_ids in (
-            batches := tqdm(KNNStore._batched(embedding_ids, self.target_batch_size))
-        ):
-            batches.set_description(
-                f"Building target index in batches of {self.target_batch_size}"
-            )
-
-            rows = self._retrieve_target_embeddings(batch_ids)
-
-            batch_ordered_ids, batch_embeddings = zip(*rows)
-            batch_embeddings = [
-                np.frombuffer(embedding, dtype=self._get_embedding_dtype())
-                for embedding in batch_embeddings
-            ]
-
-            batch_embeddings_np = np.array(batch_embeddings)
-            batch_ordered_ids_np = np.array(batch_ordered_ids, dtype=np.int64)
-
-            faiss.normalize_L2(batch_embeddings_np)
-            faiss_index.add_with_ids(batch_embeddings_np, batch_ordered_ids_np)
-
-        return faiss_index
+        if bytestring is not None:
+            return faiss.deserialize_index(np.frombuffer(bytestring, dtype=np.uint8))
+        return None
 
     def knn_source_faiss_index(self, source_token_id, source_embedding, k):
         faiss_index = self.get_source_token_faiss_index(source_token_id)
@@ -269,10 +293,85 @@ class KNNStore(object):
         # composes this probably, KNNOperator or something.
         return True
 
+    def build_target_datastore(
+        self,
+        encoder_input_ids,
+        encoder_last_hidden_state,
+        c_nearest_source_embeddings=None,
+    ):
+        """Builds one target datastore faiss index for each sequence in the batch
+        TODO: ROY: Finish this docstring
+        """
+
+        c = (
+            c_nearest_source_embeddings
+            if c_nearest_source_embeddings is not None
+            else 5
+        )
+
+        res = faiss.StandardGpuResources()
+        batch_size = encoder_input_ids.shape[0]
+        self.target_datastore = [None] * batch_size
+
+        for index in range(batch_size):
+            queries = {}
+
+            # Gather faiss indices for each source_token_id in the sequence along with the queries for each
+            for source_token_id, source_embedding in zip(
+                encoder_input_ids[index], encoder_last_hidden_state[index]
+            ):
+                if queries.get(source_token_id, None) is None:
+                    faiss_index = self.get_source_token_faiss_index(source_token_id)
+                    if faiss_index is not None:
+                        queries[source_token_id] = KNNStore.__FaissQueries__(
+                            faiss_index=faiss_index,
+                            embedding_dim=self.embedding_dim,
+                            embedding_dtype=self._get_embedding_dtype(),
+                            k=c,
+                        )
+                        if self.target_datastore[index] is None:
+                            self.target_datastore[index] = self._get_new_faiss_index()
+                    else:
+                        queries[source_token_id] = 'no_index'
+
+                if isinstance(queries[source_token_id], KNNStore.__FaissQueries__):
+                    queries[source_token_id].add_query(source_embedding)
+
+            unique_source_token_ids = queries.keys()
+
+            # Run bulk queries against faiss indices for each source token
+            for source_token_id in unique_source_token_ids:
+                faiss_queries = queries.get(source_token_id, 'no_index')
+
+                if faiss_queries != 'no_index':
+                    # TODO: ROY: Parameterize `use_gpu`` based on availability of GPU
+                    _, embedding_ids = faiss_queries.run(use_gpu=True)
+                    rows = self._retrieve_target_bytestrings(embedding_ids)
+                    batch_ids, batch_bytestrings = zip(*rows)
+                    self._add_bytestrings_to_faiss_index(
+                        self.target_datastore[index], batch_ids, batch_bytestrings
+                    )
+
+    def search_target_datastore(
+        self,
+        decoder_last_hidden_state: torch.FloatTensor,
+        k: int,
+        unfinished_sequences: torch.LongTensor,
+        return_scores: bool = None,
+    ):
+        """Returns the top k target tokens from datastore.
+        TODO: ROY: Finish this docstring
+        """
+        # This is where the heavy math of converting a single token ID (converted to a vector of dimension V)
+        # will be used to interpolate probabilities, aggregating over repeated uses of the same source_token_Id
+        # (vocabulary ID). Definitely need to reference the math in the paper here.
+        return_scores = return_scores if return_scores is not None else False
+
     #
     # Abstract methods that must be implemented in subclass
     #
 
+    @abstractmethod
     def _initialize_database(self, **kwargs):
         """Initialize DB. This is an abstract method.
 
@@ -350,6 +449,7 @@ class KNNStore(object):
             "the subclass."
         )
 
+    @abstractmethod
     def _store_corpus_timestep(
         self,
         source_token_id,
@@ -381,6 +481,7 @@ class KNNStore(object):
             "Make sure to implement `_store_corpus_timestep` in a subclass."
         )
 
+    @abstractmethod
     def _retrieve_all_source_token_ids(self):
         """Retrieve all source token IDs from Table 2. This is an abstract method.
 
@@ -398,7 +499,8 @@ class KNNStore(object):
             "Make sure to implement `_retrieve_all_source_token_ids` in a subclass."
         )
 
-    def _retrieve_source_token_embeddings_batch(self, source_token_id):
+    @abstractmethod
+    def _retrieve_source_token_embeddings_batches(self, source_token_id):
         """Retrieves one batch of source token embeddings from the DB. This is an abstract method.
 
         GENERATOR FUNCTION.
@@ -424,9 +526,10 @@ class KNNStore(object):
                 When no more data exists, should yield an empty tuple.
         """
         raise NotImplementedError(
-            "Make sure to implement `_retrieve_source_token_embeddings_batch` in a subclass."
+            "Make sure to implement `_retrieve_source_token_embeddings_batches` in a subclass."
         )
 
+    @abstractmethod
     def _store_source_faiss_bytestring(self, source_token_id, bytestring):
         """Stores faiss index for source embeddings across one source token ID. This is an abstract method.
 
@@ -447,6 +550,7 @@ class KNNStore(object):
             "Make sure to implement `_store_source_faiss_bytestring` in a subclass."
         )
 
+    @abstractmethod
     def _retrieve_source_faiss_bytestring(self, source_token_id):
         """Retrieves bytestring of serialized faiss index containing all source embeddings for
         a given source token. This is an abstract method.
@@ -469,7 +573,8 @@ class KNNStore(object):
             "Make sure to implement `_retrieve_source_faiss_bytestring` in a subclass."
         )
 
-    def _retrieve_target_embeddings(self, embedding_ids):
+    @abstractmethod
+    def _retrieve_target_bytestrings(self, embedding_ids):
         """Retrieves target token embeddings corresponding to a list of Table 2 IDs.
 
         Retrieves all target token embeddings according to a list of Table 2 IDs (`embedding_ids`).
@@ -491,5 +596,122 @@ class KNNStore(object):
             embedding ID and the bytestring of the faiss index respectively.
         """
         raise NotImplementedError(
-            "Make sure to implement `_retrieve_target_embeddings` in a subclass."
+            "Make sure to implement `_retrieve_target_bytestrings` in a subclass."
         )
+
+    class __FaissQueries__(dict):
+        """Helper to contain one faiss index with queries.
+
+        Attributes:
+            faiss_index (faiss.swigfaiss_avx2.IndexIDMap):
+                The fully initialized FAISS index stored on the CPU with vectors preloaded. Required for
+                construction of `__FaissQueries__` object. Note: only CPU-stored faiss indices should be
+                passed, as the index will be moved to the GPU at query time and then removed after.
+            embedding_dim (int):
+                The dimensionality of the query embeddings. Required for construction of `__FaissQueries__` object.
+            embedding_dtype (type):
+                The data type of the query embeddings. Defaults to `numpy.float32`.
+            queries (ndarray(`embedding_dtype`)):
+                Array of size (N, `embedding_dim`) where N is the number of query embeddings added. This will be
+                directly used as input to `faiss_index.search()`.
+            k (int):
+                The number of nearest neighbors to return data for when running queries against the stored
+                `faiss_index`. Defaults to 3.
+        """
+
+        def __init__(
+            self, faiss_index=None, embedding_dim=None, embedding_dtype=None, k=None
+        ):
+            """Initialize a faiss index queries container.
+
+            Args:
+                faiss_index (faiss.swigfaiss_avx2.IndexIDMap):
+                    The fully initialized FAISS index with vectors preloaded. Note: only CPU-stored faiss
+                    indices should be passed, as the index will be moved to the GPU at query time and then
+                    removed after.
+                embedding_dim (int):
+                    The dimensionality of the query embeddings. Required for construction of `__FaissQueries__` object.
+                embedding_dtype (type):
+                    The data type of the query embeddings. Defaults to `numpy.float32`.
+                k (int):
+                    The number of nearest neighbors to return data for when running queries against
+                    the stored `faiss_index`. Defaults to 3.
+            """
+            if faiss_index is None:
+                raise ValueError("Missing required parameter `faiss_index`.")
+
+            if embedding_dim is None:
+                raise ValueError("Missing required parameter `embedding_dim`.")
+
+            self.faiss_index = faiss_index
+
+            self.embedding_dim = embedding_dim
+            self.embedding_dtype = (
+                embedding_dtype if embedding_dtype is not None else np.float32
+            )
+
+            self.k = k if k is not None else 3
+
+            self.queries = np.empty((0, self.embedding_dim), dtype=self.embedding_dtype)
+
+        def add_query(self, query_embedding):
+            """Add one embedding to the list of query embeddings for this faiss index.
+
+            Args:
+                query_embedding (ndarray):
+                    1D array of size (`embedding_dim`) to be concatenated with existing queries. Data type is
+                    determined by attribute `embedding_dtype`, set during construction.
+            """
+            if len(query_embedding.shape) > 1:
+                raise ValueError(
+                    "Parameter `query_embedding` (ndarray) must have only one dimension."
+                )
+
+            if query_embedding.shape[0] != self.embedding_dim:
+                raise ValueError(
+                    f"Parameter `query_embedding` (ndarray) of dimension {query_embedding.shape[0]} "
+                    f"does not match configured `embedding_dim` of {self.embedding_dim}. Please "
+                    f"only pass query embeddings of dimension {self.embedding_dim}."
+                )
+
+            self.queries = np.concatenate(
+                (self.queries, query_embedding[np.newaxis, :])
+            )
+
+        def run(self, k=None, use_gpu=None):
+            """Run all queries currently stored in the container.
+
+            Runs all queries stored in `queries` against `faiss_index`.
+
+            Args:
+                k (int):
+                    The number of nearest neighbors for which to return data when running queries against
+                    the stored `faiss_index`. Defaults to `self.k` on the object, which defaults to 3
+                    when not specified at construction time.
+                use_gpu (bool):
+                    Whether to place the index on the GPU prior to searching. This also implies that the
+                    index is automatically deallocated (by calling `faiss_index.reset()`) after the search
+                    is complete.
+
+            Returns:
+                tuple(ndarray, ndarray):
+                    A tuple with first element containing the matrix of L2 distances from the query vector
+                    to the neighbor at that column for the query at that row. The second element is the
+                    matrix of IDs for the neighbor at that column for the query at that row.
+            """
+            k = k if k is not None else self.k
+            use_gpu = use_gpu if use_gpu is not None else False
+
+            if use_gpu:
+                # TODO: ROY: Expand this to support multiple GPUs / GPU array
+                res = faiss.StandardGpuResources()
+                faiss_index = faiss.index_cpu_to_gpu(res, 0, self.faiss_index)
+            else:
+                faiss_index = self.faiss_index
+
+            distance, ids = faiss_index.search(self.queries, k)
+
+            if use_gpu:
+                faiss_index.reset()
+
+            return distance, ids

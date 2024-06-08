@@ -241,7 +241,7 @@ class KNNStorePG(KNNStore):
             source_token_ids = cursor.fetchall()
             return source_token_ids
 
-    def _retrieve_source_token_embeddings_batch(self, source_token_id):
+    def _retrieve_source_token_embeddings_batches(self, source_token_id):
         with psycopg.connect(self.connection_string, autocommit=True) as conn:
             cursor = conn.cursor()
             source_embedding_query = sql.SQL(
@@ -310,7 +310,7 @@ class KNNStorePG(KNNStore):
 
         return bytestring
 
-    def _retrieve_target_embeddings(self, embedding_ids):
+    def _retrieve_target_bytestrings(self, embedding_ids):
         with psycopg.connect(self.connection_string, autocommit=True) as conn:
             cursor = conn.cursor()
 
