@@ -32,15 +32,17 @@ class KNNStore(ABC):
         embedding_dtype (str):
         embedding_batch_size (int):
         target_batch_size (int):
+        c (int):
     """
 
-    default_table_prefix = 'knn_store'
-    default_configuration_table_stem = 'config'
-    default_embedding_table_stem = 'embedding'
-    default_faiss_cache_table_stem = 'faiss_index'
+    default_table_prefix = "knn_store"
+    default_configuration_table_stem = "config"
+    default_embedding_table_stem = "embedding"
+    default_faiss_cache_table_stem = "faiss_index"
     default_embedding_batch_size = 50
     default_target_batch_size = 50
-    default_embedding_dtype = 'float32'
+    default_embedding_dtype = "float32"
+    default_c = 5
 
     def __init__(
         self,
@@ -52,6 +54,7 @@ class KNNStore(ABC):
         embedding_batch_size=None,
         target_batch_size=None,
         embedding_dtype=None,
+        c=None,
         **kwargs,
     ):
         """Initializes KNNStore instance.
@@ -113,6 +116,8 @@ class KNNStore(ABC):
             else KNNStore.default_embedding_dtype
         )
 
+        self.c = self.c if self.c is not None else KNNStore.default_c
+
         self.configuration_table_name = (
             self.table_prefix + "_" + self.configuration_table_stem
         )
@@ -128,7 +133,7 @@ class KNNStore(ABC):
     @staticmethod
     def _batched(iterable, n):
         if n < 1:
-            raise ValueError('n must be at least one')
+            raise ValueError("n must be at least one")
         it = iter(iterable)
         while batch := tuple(islice(it, n)):
             yield batch
@@ -185,7 +190,7 @@ class KNNStore(ABC):
 
     def _get_embedding_dtype(self):
         # TODO: add support for dtypes other than np.float32
-        if self.embedding_dtype == 'float32':
+        if self.embedding_dtype == "float32":
             embedding_dtype = np.float32
         else:
             raise ValueError(f"Unsupported dtype used '{self.embedding_dtype}'")
@@ -297,19 +302,14 @@ class KNNStore(ABC):
         self,
         encoder_input_ids,
         encoder_last_hidden_state,
-        c_nearest_source_embeddings=None,
+        c=None,
     ):
         """Builds one target datastore faiss index for each sequence in the batch
         TODO: ROY: Finish this docstring
         """
 
-        c = (
-            c_nearest_source_embeddings
-            if c_nearest_source_embeddings is not None
-            else 5
-        )
+        c = c if c is not None else self.c
 
-        res = faiss.StandardGpuResources()
         batch_size = encoder_input_ids.shape[0]
         self.target_datastore = [None] * batch_size
 
@@ -329,43 +329,107 @@ class KNNStore(ABC):
                             embedding_dtype=self._get_embedding_dtype(),
                             k=c,
                         )
-                        if self.target_datastore[index] is None:
-                            self.target_datastore[index] = self._get_new_faiss_index()
                     else:
-                        queries[source_token_id] = 'no_index'
+                        queries[source_token_id] = "no_index"
 
                 if isinstance(queries[source_token_id], KNNStore.__FaissQueries__):
                     queries[source_token_id].add_query(source_embedding)
 
             unique_source_token_ids = queries.keys()
 
+            if len(unique_source_token_ids) > 0:
+                self.target_datastore[index] = KNNStore.__FaissQueries__(
+                    faiss_index=self._get_new_faiss_index(),
+                    embedding_dim=self.embedding_dim,
+                    embedding_dtype=self._get_embedding_dtype(),
+                )
+
             # Run bulk queries against faiss indices for each source token
             for source_token_id in unique_source_token_ids:
-                faiss_queries = queries.get(source_token_id, 'no_index')
-
-                if faiss_queries != 'no_index':
-                    # TODO: ROY: Parameterize `use_gpu`` based on availability of GPU
-                    _, embedding_ids = faiss_queries.run(use_gpu=True)
-                    rows = self._retrieve_target_bytestrings(embedding_ids)
-                    batch_ids, batch_bytestrings = zip(*rows)
-                    self._add_bytestrings_to_faiss_index(
-                        self.target_datastore[index], batch_ids, batch_bytestrings
-                    )
+                _, embedding_ids = queries[source_token_id].run(use_gpu=True)
+                rows = self._retrieve_target_bytestrings(embedding_ids)
+                batch_ids, batch_bytestrings = zip(*rows)
+                self._add_bytestrings_to_faiss_index(
+                    self.target_datastore[index], batch_ids, batch_bytestrings
+                )
 
     def search_target_datastore(
         self,
         decoder_last_hidden_state: torch.FloatTensor,
         k: int,
         unfinished_sequences: torch.LongTensor,
-        return_scores: bool = None,
+        return_logits: bool = None,
+        vocab_dim: int = None,
+        temperature: float = None,
     ):
         """Returns the top k target tokens from datastore.
         TODO: ROY: Finish this docstring
         """
-        # This is where the heavy math of converting a single token ID (converted to a vector of dimension V)
-        # will be used to interpolate probabilities, aggregating over repeated uses of the same source_token_Id
-        # (vocabulary ID). Definitely need to reference the math in the paper here.
-        return_scores = return_scores if return_scores is not None else False
+        # We have an array of faiss indices, one for each sequence. Some sequences in the batch unfinished,
+        # other are finished. We know which one based on the array of 0 or 1 values in `unfinished_sequences`.
+        # We will attempt to acquire k nearest targets, but there may be less than k in the target store
+        # depending on the source_token_ids that were included in the batch (and the parameter c given to the
+        # store)
+
+        # TODO: ROY: Test the reults of faiss index lookups and look at the dtype of the returned distance numpy array.
+        # I think it should match the input vectors, but damn who knows. Maybe indexflatl2 is always float32? I really
+        # dont' know, and would like to know if we will always expect a certain type here.
+
+        embedding_dtype = self._get_embedding_dtype()
+        batch_l2_distances = np.empty((0, k), dtype=embedding_dtype)
+        batch_target_token_ids = np.empty((0, k), dtype=np.int64)
+
+        for query_embedding, faiss_queries, sequence_is_unfinished in zip(
+            decoder_last_hidden_state,
+            self.target_datastore,
+            unfinished_sequences == True,
+        ):
+            if sequence_is_unfinished and faiss_queries is not None:
+                faiss_queries.add_query(query_embedding)
+                # TODO: ROY: Parameterize `use_gpu` based on whether GPU is available
+                l2_distances, embedding_ids = faiss_queries.run(k=k, use_gpu=True)
+                target_token_ids = self._retrieve_target_token_ids(embedding_ids)
+            else:
+                # TODO: ROY: See if using blank token ID 0 and blank l2_distance of 0 ends up
+                # working out well when we attempt to do the actual interpolation in the LogitsProcessor
+                # using high-speed vectorized calculations. It may not, may need to do something else.
+                l2_distances = np.zeros((1, k), dtype=embedding_dtype)
+                target_token_ids = np.zeros((1, k), dtype=np.int64)
+
+            batch_l2_distances = np.concatenate(
+                (batch_l2_distances, l2_distances), axis=0
+            )
+            batch_target_token_ids = np.concatenate(
+                (batch_target_token_ids, target_token_ids), axis=0
+            )
+
+        if not return_logits:
+            return batch_l2_distances, batch_target_token_ids
+
+        if vocab_dim is None:
+            raise ValueError(
+                "Missing required parameter `vocab_dim` necessary for calculating logits."
+            )
+
+        if temperature is None:
+            raise ValueError(
+                "Missing required parameter `temperature` necessary for calculating logits."
+            )
+
+        batch_size = batch_l2_distances.shape[0]
+        one_hot_tokens = np.zeros(
+            (batch_size, k, vocab_dim), dtype=self._get_embedding_dtype()
+        )
+
+        for i in range(batch_size):
+            for j in range(k):
+                one_hot_tokens[i, j, batch_target_token_ids[i, j]] = 1
+
+        exp_term = np.exp(batch_l2_distances / temperature)
+
+        batch_knn_probs = (
+            one_hot_tokens * exp_term.reshape(batch_size, k, 1)
+        ) / np.sum(exp_term, axis=0)
 
     #
     # Abstract methods that must be implemented in subclass
@@ -704,6 +768,8 @@ class KNNStore(ABC):
 
             if use_gpu:
                 # TODO: ROY: Expand this to support multiple GPUs / GPU array
+                # Should be something like the following:
+                # gpu_index = faiss.index_cpu_to_all_gpus(cpu_index)
                 res = faiss.StandardGpuResources()
                 faiss_index = faiss.index_cpu_to_gpu(res, 0, self.faiss_index)
             else:
