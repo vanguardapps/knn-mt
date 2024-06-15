@@ -102,7 +102,7 @@ gpu_index_with_map.add_with_ids(
 k = 3
 D, I = gpu_index_with_map.search(vectors[:3], k)
 
-print(D)
-print(I)
+print('D.dtype', D.dtype)
+print('I.dtype', I.dtype)
 
 print(faiss.serialize_index(faiss.index_gpu_to_cpu(gpu_index_with_map)))

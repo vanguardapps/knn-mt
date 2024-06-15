@@ -358,24 +358,17 @@ class KNNStore(ABC):
         decoder_last_hidden_state: torch.FloatTensor,
         k: int,
         unfinished_sequences: torch.LongTensor,
-        return_logits: bool = None,
+        return_probs: bool = None,
         vocab_dim: int = None,
         temperature: float = None,
     ):
         """Returns the top k target tokens from datastore.
         TODO: ROY: Finish this docstring
         """
-        # We have an array of faiss indices, one for each sequence. Some sequences in the batch unfinished,
-        # other are finished. We know which one based on the array of 0 or 1 values in `unfinished_sequences`.
-        # We will attempt to acquire k nearest targets, but there may be less than k in the target store
-        # depending on the source_token_ids that were included in the batch (and the parameter c given to the
-        # store)
-
-        # TODO: ROY: Test the reults of faiss index lookups and look at the dtype of the returned distance numpy array.
-        # I think it should match the input vectors, but damn who knows. Maybe indexflatl2 is always float32? I really
-        # dont' know, and would like to know if we will always expect a certain type here.
-
         embedding_dtype = self._get_embedding_dtype()
+
+        # TODO: ROY: Investigate whether the return type from faiss for distances is dependent upon the dtype of the
+        # vectors between which distance is being computed.
         batch_l2_distances = np.empty((0, k), dtype=embedding_dtype)
         batch_target_token_ids = np.empty((0, k), dtype=np.int64)
 
@@ -390,9 +383,7 @@ class KNNStore(ABC):
                 l2_distances, embedding_ids = faiss_queries.run(k=k, use_gpu=True)
                 target_token_ids = self._retrieve_target_token_ids(embedding_ids)
             else:
-                # TODO: ROY: See if using blank token ID 0 and blank l2_distance of 0 ends up
-                # working out well when we attempt to do the actual interpolation in the LogitsProcessor
-                # using high-speed vectorized calculations. It may not, may need to do something else.
+                # Cut down on computational complexity for finished sequences
                 l2_distances = np.zeros((1, k), dtype=embedding_dtype)
                 target_token_ids = np.zeros((1, k), dtype=np.int64)
 
@@ -403,7 +394,7 @@ class KNNStore(ABC):
                 (batch_target_token_ids, target_token_ids), axis=0
             )
 
-        if not return_logits:
+        if not return_probs:
             return batch_l2_distances, batch_target_token_ids
 
         if vocab_dim is None:
@@ -425,11 +416,19 @@ class KNNStore(ABC):
             for j in range(k):
                 one_hot_tokens[i, j, batch_target_token_ids[i, j]] = 1
 
-        exp_term = np.exp(batch_l2_distances / temperature)
+        # TODO: ROY: Investigate whether it would work to strip away the np.exp( part here
+        # and just return scores
+        exp_term = np.exp(-batch_l2_distances / temperature)
 
-        batch_knn_probs = (
+        # `knn_probs_per_candidate` has shape (batch_size, k, vocab_dim)
+        knn_probs_per_candidate = (
             one_hot_tokens * exp_term.reshape(batch_size, k, 1)
         ) / np.sum(exp_term, axis=0)
+
+        # `knn_probs` has shape (batch_size, vocab_dim)
+        knn_probs = np.sum(knn_probs_per_candidate, axis=0)
+
+        return knn_probs
 
     #
     # Abstract methods that must be implemented in subclass
