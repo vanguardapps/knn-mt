@@ -303,3 +303,7 @@ class KNNStorePG(KNNStore):
             cursor.execute(target_embeddings_query, (embedding_ids,))
             rows = cursor.fetchall()
             return rows
+
+    def _retrieve_target_token_ids(self, embedding_ids):
+        # TODO: ROY: Implement
+        return True

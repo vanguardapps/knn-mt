@@ -142,14 +142,28 @@ def main():
         dtype=int,
     )
     encoder_input_ids = np.random.choice(
-        source_token_ids_available, size=(20, 300), replace=True
+        source_token_ids_available, size=(2, 150), replace=True
     )
-    encoder_last_hidden_state = np.random.random(size=(20, 300, 1024))
+    encoder_last_hidden_state = np.random.random(size=(2, 150, 1024))
 
     store.build_target_datastore(
         encoder_input_ids=encoder_input_ids,
         encoder_last_hidden_state=encoder_last_hidden_state,
     )
+
+    print('encoder_last_hidden_state.shape', encoder_last_hidden_state[0, 0:2])
+
+    probs = store.search_target_datastore(
+        decoder_last_hidden_state=encoder_last_hidden_state[0, 0:2],
+        k=5,
+        unfinished_sequences=np.array([1, 1], dtype=np.int64),
+        pad_token_id=0,
+        vocab_dim=300000,
+        temperature=1,
+        return_probs=True,
+    )
+
+    print('probs.shape', probs.shape)
 
 
 if __name__ == "__main__":

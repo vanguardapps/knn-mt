@@ -20,6 +20,7 @@ class KNNStore(ABC):
         default_embedding_dtype (str): (class attribute)
         default_embedding_batch_size (int): (class attribute)
         default_target_batch_size (int): (class attribute)
+        default_c (int): (class attribute)
         table_prefix (str):
         configuration_table_stem (str):
         embedding_table_stem (str):
@@ -71,6 +72,7 @@ class KNNStore(ABC):
             embedding_batch_size (int):
             target_batch_size (int):
             embedding_dtype (str):
+            c (int):
             **kwargs (dict):
 
         """
@@ -116,7 +118,7 @@ class KNNStore(ABC):
             else KNNStore.default_embedding_dtype
         )
 
-        self.c = self.c if self.c is not None else KNNStore.default_c
+        self.c = c if c is not None else KNNStore.default_c
 
         self.configuration_table_name = (
             self.table_prefix + "_" + self.configuration_table_stem
@@ -313,7 +315,9 @@ class KNNStore(ABC):
         batch_size = encoder_input_ids.shape[0]
         self.target_datastore = [None] * batch_size
 
-        for index in range(batch_size):
+        for index in (batches := tqdm(range(batch_size))):
+            batches.set_description(f"Building target datastore batch {index}")
+
             queries = {}
 
             # Gather faiss indices for each source_token_id in the sequence along with the queries for each
@@ -347,10 +351,15 @@ class KNNStore(ABC):
             # Run bulk queries against faiss indices for each source token
             for source_token_id in unique_source_token_ids:
                 _, embedding_ids = queries[source_token_id].run(use_gpu=True)
-                rows = self._retrieve_target_bytestrings(embedding_ids)
+                unique_embedding_ids = np.unique(embedding_ids.flatten())
+                rows = self._retrieve_target_bytestrings(
+                    unique_embedding_ids[unique_embedding_ids > 0].tolist()
+                )
                 batch_ids, batch_bytestrings = zip(*rows)
                 self._add_bytestrings_to_faiss_index(
-                    self.target_datastore[index], batch_ids, batch_bytestrings
+                    self.target_datastore[index].faiss_index,
+                    batch_ids,
+                    batch_bytestrings,
                 )
 
     def search_target_datastore(
@@ -358,6 +367,7 @@ class KNNStore(ABC):
         decoder_last_hidden_state: torch.FloatTensor,
         k: int,
         unfinished_sequences: torch.LongTensor,
+        pad_token_id: int = None,
         return_probs: bool = None,
         vocab_dim: int = None,
         temperature: float = None,
@@ -372,10 +382,12 @@ class KNNStore(ABC):
         batch_l2_distances = np.empty((0, k), dtype=embedding_dtype)
         batch_target_token_ids = np.empty((0, k), dtype=np.int64)
 
+        pad_token_id = pad_token_id if pad_token_id is not None else 0
+
         for query_embedding, faiss_queries, sequence_is_unfinished in zip(
             decoder_last_hidden_state,
             self.target_datastore,
-            unfinished_sequences == True,
+            unfinished_sequences == 1,
         ):
             if sequence_is_unfinished and faiss_queries is not None:
                 faiss_queries.add_query(query_embedding)
@@ -385,7 +397,9 @@ class KNNStore(ABC):
             else:
                 # Cut down on computational complexity for finished sequences
                 l2_distances = np.zeros((1, k), dtype=embedding_dtype)
-                target_token_ids = np.zeros((1, k), dtype=np.int64)
+                target_token_ids = np.full(
+                    (1, k), fill_value=pad_token_id, dtype=np.int64
+                )
 
             batch_l2_distances = np.concatenate(
                 (batch_l2_distances, l2_distances), axis=0
@@ -652,7 +666,7 @@ class KNNStore(ABC):
 
         Args:
             embedding_ids (list):
-                Source token ID for this source embedding faiss index.
+                Table 2 row IDs for which to retrieve the `target_embedding` values.
 
         Returns:
             tuple(tuple(int, bytes)): A tuple of two-element tuples, each containing the timestep /
@@ -660,6 +674,31 @@ class KNNStore(ABC):
         """
         raise NotImplementedError(
             "Make sure to implement `_retrieve_target_bytestrings` in a subclass."
+        )
+
+    @abstractmethod
+    def _retrieve_target_token_ids(self, embedding_ids):
+        """Retrieves target token IDs to a list of Table 2 IDs.
+
+        Retrieves all target token IDs according to a list of Table 2 IDs (`embedding_ids`).
+        The format of the return should be a tuple of integer target token IDs:
+
+        Ex: (target_token_id1, target_token_id2, ...)
+
+        If no data is found for the given `embedding_ids`, an empty tuple (`()`) should be returned.
+
+        Note: No database implementation is given. Use one of the subclasses for a particular
+        type of database.
+
+        Args:
+            embedding_ids (list):
+                Table 2 row IDs for which to retrieve the `target_token_id` values.
+
+        Returns:
+            tuple(int): A tuple of integer target token IDs.
+        """
+        raise NotImplementedError(
+            "Make sure to implement `_retrieve_target_token_ids` in a subclass."
         )
 
     class __FaissQueries__(dict):
@@ -730,6 +769,7 @@ class KNNStore(ABC):
                     "Parameter `query_embedding` (ndarray) must have only one dimension."
                 )
 
+            print('query_embedding', query_embedding)
             if query_embedding.shape[0] != self.embedding_dim:
                 raise ValueError(
                     f"Parameter `query_embedding` (ndarray) of dimension {query_embedding.shape[0]} "

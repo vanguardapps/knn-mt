@@ -45,6 +45,7 @@ class KNNStoreSQLite(KNNStore):
         embedding_batch_size=None,
         target_batch_size=None,
         embedding_dtype=None,
+        c=None,
         **kwargs,
     ):
         """Initializes KNNStore instance.
@@ -67,6 +68,7 @@ class KNNStoreSQLite(KNNStore):
             embedding_batch_size (int):
             target_batch_size (int):
             embedding_dtype (str):
+            c (int):
             **kwargs (dict):
         """
 
@@ -88,6 +90,7 @@ class KNNStoreSQLite(KNNStore):
             embedding_batch_size=embedding_batch_size,
             target_batch_size=target_batch_size,
             embedding_dtype=embedding_dtype,
+            c=c,
         )
 
     @staticmethod
@@ -337,8 +340,6 @@ class KNNStoreSQLite(KNNStore):
             (int(source_token_id),),
         )
 
-        print('valid_faiss_cache_table_name', valid_faiss_cache_table_name)
-
         result = cur.fetchall()
 
         cur.close()
@@ -359,9 +360,11 @@ class KNNStoreSQLite(KNNStore):
         con = self._get_sqlite_connection()
         cur = con.cursor()
 
+        placeholders = len(embedding_ids) * '?'
+
         cur.execute(
-            f"select id, target_embedding from {valid_embedding_table_name} where id in %s",
-            (embedding_ids,),
+            f"select id, target_embedding from {valid_embedding_table_name} where id in ({','.join(placeholders)})",
+            embedding_ids,
         )
         rows = cur.fetchall()
 
