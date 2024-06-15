@@ -372,3 +372,7 @@ class KNNStoreSQLite(KNNStore):
         con.close()
 
         return rows
+
+    def _retrieve_target_token_ids(self, embedding_ids):
+        # TODO: ROY: Implement
+        return True
