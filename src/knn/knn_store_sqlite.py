@@ -336,7 +336,7 @@ class KNNStoreSQLite(KNNStore):
         cur = con.cursor()
 
         cur.execute(
-            f"select faiss_index from {valid_faiss_cache_table_name} where source_token_id = ?",
+            f"select faiss_index from {valid_faiss_cache_table_name} where source_token_id = ?;",
             (int(source_token_id),),
         )
 
@@ -363,7 +363,7 @@ class KNNStoreSQLite(KNNStore):
         placeholders = len(embedding_ids) * '?'
 
         cur.execute(
-            f"select id, target_embedding from {valid_embedding_table_name} where id in ({','.join(placeholders)})",
+            f"select id, target_embedding from {valid_embedding_table_name} where id in ({','.join(placeholders)});",
             embedding_ids,
         )
         rows = cur.fetchall()
@@ -374,5 +374,40 @@ class KNNStoreSQLite(KNNStore):
         return rows
 
     def _retrieve_target_token_ids(self, embedding_ids):
-        # TODO: ROY: Implement
-        return True
+        # TODO: ROY: Finish docstring
+        embedding_ids_len = (
+            len(embedding_ids) if isinstance(embedding_ids, tuple) else 0
+        )
+
+        if embedding_ids_len < 1:
+            return ()
+
+        valid_embedding_table_name = self._validate_table_name(
+            self.embedding_table_name
+        )
+
+        con = self._get_sqlite_connection()
+        cur = con.cursor()
+
+        unique_embedding_ids = tuple(set(embedding_ids))
+        placeholders = len(unique_embedding_ids) * '?'
+
+        cur.execute(
+            f"select id, target_token_id from {valid_embedding_table_name} where id in ({','.join(placeholders)});",
+            tuple(int(embedding_id) for embedding_id in unique_embedding_ids),
+        )
+
+        rows = cur.fetchall()
+
+        target_token_dict = {
+            embedding_id: target_token_id for (embedding_id, target_token_id) in rows
+        }
+
+        target_token_ids = tuple(
+            target_token_dict.get(embedding_id, -1) for embedding_id in embedding_ids
+        )
+
+        cur.close()
+        con.close()
+
+        return target_token_ids

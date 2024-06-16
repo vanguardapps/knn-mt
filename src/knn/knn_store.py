@@ -391,9 +391,19 @@ class KNNStore(ABC):
         ):
             if sequence_is_unfinished and faiss_queries is not None:
                 faiss_queries.add_query(query_embedding)
+
                 # TODO: ROY: Parameterize `use_gpu` based on whether GPU is available
                 l2_distances, embedding_ids = faiss_queries.run(k=k, use_gpu=True)
-                target_token_ids = self._retrieve_target_token_ids(embedding_ids)
+
+                target_token_ids = np.array(
+                    self._retrieve_target_token_ids(tuple(embedding_ids[0])),
+                    dtype=np.int64,
+                ).reshape((1, -1))
+
+                target_token_ids = np.array(
+                    target_token_ids,
+                    dtype=np.int64,
+                ).reshape((1, -1))
             else:
                 # Cut down on computational complexity for finished sequences
                 l2_distances = np.zeros((1, k), dtype=embedding_dtype)
@@ -422,6 +432,8 @@ class KNNStore(ABC):
             )
 
         batch_size = batch_l2_distances.shape[0]
+
+        # shape (batch_size, k, vocab_dim)
         one_hot_tokens = np.zeros(
             (batch_size, k, vocab_dim), dtype=self._get_embedding_dtype()
         )
@@ -432,12 +444,22 @@ class KNNStore(ABC):
 
         # TODO: ROY: Investigate whether it would work to strip away the np.exp( part here
         # and just return scores
+
+        # shape (batch_size, k)
         exp_term = np.exp(-batch_l2_distances / temperature)
 
-        # `knn_probs_per_candidate` has shape (batch_size, k, vocab_dim)
-        knn_probs_per_candidate = (
-            one_hot_tokens * exp_term.reshape(batch_size, k, 1)
-        ) / np.sum(exp_term, axis=0)
+        # Replace any infinitesimal or zero values in `exp_term` with epsilon
+        epsilon = 1e-7
+        exp_term[exp_term < epsilon] = epsilon
+
+        # shape (batch_size, k, vocab_dim)
+        V = one_hot_tokens * exp_term.reshape(batch_size, k, 1)
+
+        # shape (batch_size, 1, 1)
+        Z = np.sum(exp_term, axis=1).reshape(batch_size, 1, 1)
+
+        # shape (batch_size, k, vocab_dim)
+        knn_probs_per_candidate = V / Z
 
         # `knn_probs` has shape (batch_size, vocab_dim)
         knn_probs = np.sum(knn_probs_per_candidate, axis=0)
@@ -769,7 +791,6 @@ class KNNStore(ABC):
                     "Parameter `query_embedding` (ndarray) must have only one dimension."
                 )
 
-            print('query_embedding', query_embedding)
             if query_embedding.shape[0] != self.embedding_dim:
                 raise ValueError(
                     f"Parameter `query_embedding` (ndarray) of dimension {query_embedding.shape[0]} "

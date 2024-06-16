@@ -305,5 +305,35 @@ class KNNStorePG(KNNStore):
             return rows
 
     def _retrieve_target_token_ids(self, embedding_ids):
-        # TODO: ROY: Implement
-        return True
+        # TODO: ROY: Finish docstring
+        with psycopg.connect(self.connection_string, autocommit=True) as conn:
+
+            embedding_ids_len = (
+                len(embedding_ids) if isinstance(embedding_ids, tuple) else 0
+            )
+
+            if embedding_ids_len < 1:
+                return ()
+
+            cursor = conn.cursor()
+
+            unique_embedding_ids = tuple(set(embedding_ids))
+
+            target_embeddings_query = sql.SQL(
+                "select id, target_token_id from {table_name} where id in %s"
+            ).format(table_name=sql.Identifier(self.embedding_table_name))
+
+            cursor.execute(target_embeddings_query, (unique_embedding_ids,))
+            rows = cursor.fetchall()
+
+            target_token_dict = {
+                embedding_id: target_token_id
+                for (embedding_id, target_token_id) in rows
+            }
+
+            target_token_ids = tuple(
+                target_token_dict.get(embedding_id, -1)
+                for embedding_id in embedding_ids
+            )
+
+            return target_token_ids

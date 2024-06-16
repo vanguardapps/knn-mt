@@ -139,7 +139,7 @@ def main():
             15520,
             10527,
         ],
-        dtype=int,
+        dtype=np.int64,
     )
     encoder_input_ids = np.random.choice(
         source_token_ids_available, size=(2, 150), replace=True
@@ -164,6 +164,8 @@ def main():
     )
 
     print('probs.shape', probs.shape)
+
+    print('probs', probs[probs > 0])
 
 
 if __name__ == "__main__":
