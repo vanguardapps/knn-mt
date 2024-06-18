@@ -443,7 +443,7 @@ class KNNStore(ABC):
                 one_hot_tokens[i, j, batch_target_token_ids[i, j]] = 1
 
         # TODO: ROY: Investigate whether it would work to strip away the np.exp( part here
-        # and just return scores
+        # and just return scores (I don't think so--normalization of values would be weird)
 
         # shape (batch_size, k)
         exp_term = np.exp(-batch_l2_distances / temperature)
