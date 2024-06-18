@@ -411,3 +411,19 @@ class KNNStoreSQLite(KNNStore):
         con.close()
 
         return target_token_ids
+
+    def validate(self):
+        """Validate the KNNStoreSQLite instance.
+
+        Verifies that the instances is of type KNNStoreSQLite and that the basic required attributes
+        are in place. Raises an exception when invalid.
+        """
+
+        super(self, KNNStoreSQLite).validate()
+
+        if not isinstance(self, KNNStoreSQLite) or not (
+            hasattr(self, 'sqlite_connect_kwargs')
+        ):
+            raise ValueError(
+                "Please sure the KNNStoreSQLite instance is valid and properly constructed."
+            )

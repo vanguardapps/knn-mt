@@ -466,6 +466,24 @@ class KNNStore(ABC):
 
         return knn_probs
 
+    def validate(self):
+        """Validate the KNNStore instance.
+
+        Verifies that the instances is of type KNNStore and that the basic required attributes
+        are in place. Raises an exception when invalid.
+        """
+
+        if not isinstance(self, KNNStore) or not (
+            hasattr(self, 'embedding_dim')
+            and hasattr(self, 'embedding_dtype')
+            and hasattr(self, 'embedding_batch_size')
+            and hasattr(self, 'target_batch_size')
+            and hasattr(self, 'c')
+        ):
+            raise ValueError(
+                "Please sure the KNNStore instance is valid and properly constructed."
+            )
+
     #
     # Abstract methods that must be implemented in subclass
     #

@@ -337,3 +337,17 @@ class KNNStorePG(KNNStore):
             )
 
             return target_token_ids
+
+    def validate(self):
+        """Validate the KNNStorePG instance.
+
+        Verifies that the instances is of type KNNStorePG and that the basic required attributes
+        are in place. Raises an exception when invalid.
+        """
+
+        super(self, KNNStorePG).validate()
+
+        if not isinstance(self, KNNStorePG) or not (hasattr(self, 'connection_string')):
+            raise ValueError(
+                "Please sure the KNNStorePG instance is valid and properly constructed."
+            )
