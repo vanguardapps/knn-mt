@@ -5,6 +5,7 @@
 /notes
 /bin
 /experiments
+/db
 __pycache__
 output*.txt
 *.log
